@@ -59,3 +59,52 @@ where W: Write + Seek
         })?;
     Ok(())
 }
+
+pub(crate) fn to_xml_anime_settings<W: Write + Seek>(writer: &mut Writer<W>) -> std::io::Result<()> {
+    writer.create_element("fps")
+        .write_text_content(BytesText::new("30"))?;
+    writer.create_element("frameCount")
+        .write_text_content(BytesText::new("11"))?;
+    writer.create_element("sortMode")
+        .write_text_content(BytesText::new("prio"))?;
+    writer.create_element("canvasSize")
+        .write_text_content(BytesText::new("320 320"))?;
+    writer.create_element("pivot")
+        .write_text_content(BytesText::new("0 0"))?;
+    writer.create_element("bgColor")
+        .write_text_content(BytesText::new("FF323232"))?;
+    writer.create_element("gridSize")
+        .write_text_content(BytesText::new("32"))?;
+    writer.create_element("gridColor")
+        .write_text_content(BytesText::new("FF808080"))?;
+    writer.create_element("ik_depth")
+        .write_text_content(BytesText::new("3"))?;
+    writer.create_element("startFrame")
+        .write_text_content(BytesText::new("0"))?;
+    writer.create_element("endFrame")
+        .write_text_content(BytesText::new("10"))?;
+    writer.create_element("bgSettings")
+        .write_inner_content(|writer| to_xml_anime_bg_settings(writer))?;
+    writer.create_element("outStartNum")
+        .write_text_content(BytesText::new("0"))?;
+    Ok(())
+}
+
+pub(crate) fn to_xml_anime_bg_settings<W: Write + Seek>(writer: &mut Writer<W>) -> std::io::Result<()> {
+    for i in 0..2 {
+        writer.create_element("value")
+            .write_inner_content(|writer| {
+                create_blank_element(writer, "imagePath")?;
+                writer.create_element("imageDisp")
+                    .write_text_content(BytesText::new("1"))?;
+                writer.create_element("imageOffset")
+                    .write_text_content(BytesText::new("0 0"))?;
+                writer.create_element("imageCanvas")
+                    .write_text_content(BytesText::new("0 0"))?;
+                writer.create_element("imagePivot")
+                    .write_text_content(BytesText::new("0 0"))?;
+                Ok(())
+            })?;
+    }
+    Ok(())
+}

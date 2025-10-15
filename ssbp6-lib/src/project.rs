@@ -4,8 +4,10 @@ use std::io::{Cursor, Seek, SeekFrom};
 use quick_xml::events::BytesText;
 use quick_xml::Writer;
 use crate::anime::Anime;
+use crate::anime::PartType::effect;
 use crate::cell::{tex_pack_settings_to_xml, CellEntry, InterpolateType, TexFilterMode, TexWrapMode};
-use crate::util::{create_blank_element, create_name_list, Ptr, StringPtr};
+use crate::effect::Effect;
+use crate::util::{create_blank_element, create_name_list, to_xml_anime_settings, Ptr, StringPtr};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -16,7 +18,7 @@ pub struct ProjectHeader {
     image_base_dir: StringPtr,
     pub(crate) cell: Ptr<CellEntry>,
     pub(crate) anime_pack_data: Ptr<Anime>,
-    pub(crate) effect_file: u32,
+    pub(crate) effect_file: Ptr<Effect>,
     pub(crate) num_cells: u16,
     pub(crate) num_anime_packs: u16,
     pub(crate) num_effect_file_list: u16,
@@ -40,9 +42,15 @@ impl ProjectHeader {
     pub fn get_num_anime(&self) -> u16 {
         self.num_anime_packs
     }
+    pub fn get_effects(&self, binary: &[u8]) -> &[Effect] {
+        self.effect_file.array(binary, self.num_effect_file_list as usize)
+    }
+    pub fn get_num_effects(&self) -> u16 {
+        self.num_effect_file_list
+    }
 
-    pub fn to_xml(&self, name: &str, cell_names: &[String], anime_names: &[String])
-        -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn to_xml(&self, name: &str, cell_names: &[String],
+        anime_names: &[String], effect_names: &[String]) -> Result<Vec<u8>, Box<dyn Error>> {
         let xml_fmt = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n";
         let mut cursor = Cursor::new(xml_fmt.as_bytes().to_vec());
         cursor.seek(SeekFrom::End(0))?;
@@ -53,11 +61,14 @@ impl ProjectHeader {
                 writer.create_element("name")
                     .write_text_content(BytesText::new(name))?;
                 create_blank_element(writer, "exportPath")?;
-                // writer.create_element("settings")
-                //     .write_inner_content(|writer| self.settings_to_xml(writer))?;
+                writer.create_element("settings")
+                    .write_inner_content(|writer| self.settings_to_xml(writer))?;
+                writer.create_element("animeSettings")
+                    .write_inner_content(|writer| to_xml_anime_settings(writer))?;
                 tex_pack_settings_to_xml(writer)?;
                 create_name_list("cellmapNames", cell_names, writer)?;
                 create_name_list("animepackNames", anime_names, writer)?;
+                create_name_list("effectFileNames", effect_names, writer)?;
                 create_blank_element(writer, "lastAnimeFile")?;
                 create_blank_element(writer, "lastAnimeName")?;
                 create_blank_element(writer, "lastPart")?;
@@ -73,7 +84,6 @@ impl ProjectHeader {
         Ok(writer.into_inner().into_inner())
     }
 
-    #[allow(dead_code)]
     fn settings_to_xml<W>(&self, writer: &mut Writer<W>) -> std::io::Result<()>
     where W: Write + Seek {
         create_blank_element(writer, "animeBaseDirectory")?;
@@ -97,6 +107,7 @@ impl ProjectHeader {
         create_blank_element(writer, "ssConverterOptions")?;
         writer.create_element("player")
             .write_text_content(BytesText::new("any"))?;
+        create_blank_element(writer, "signal")?;
         writer.create_element("strictVer4")
             .write_text_content(BytesText::new("0"))?;
         writer.create_element("dontUseMatrixForTransform")
@@ -113,7 +124,7 @@ impl ProjectHeader {
             .write_text_content(BytesText::new("1"))?;
         writer.create_element("availableInterpolationTypes")
             .write_inner_content(|writer| {
-                for interp in (0..5)
+                for interp in (0..6)
                     .map(|i| TryInto::<InterpolateType>::try_into(i).unwrap()) {
                     writer.create_element("item")
                         .write_text_content(BytesText::new(&format!("{:?}", interp)))?;

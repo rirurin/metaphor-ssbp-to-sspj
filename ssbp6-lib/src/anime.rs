@@ -18,7 +18,8 @@ use glam::{Vec2, Vec3};
 use quick_xml::events::BytesText;
 use quick_xml::events::attributes::Attribute;
 use quick_xml::Writer;
-use crate::util::{create_blank_element, create_name_list, Ptr, StringPtr};
+use crate::cell::CastError;
+use crate::util::{create_blank_element, create_name_list, to_xml_anime_bg_settings, to_xml_anime_settings, Ptr, StringPtr};
 
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
@@ -50,6 +51,17 @@ pub enum BlendType {
     screen,
     exclusion,
     invert,
+}
+
+impl TryFrom<u16> for BlendType {
+    type Error = CastError;
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        if value <= Self::invert as u16 {
+            Ok(unsafe { std::mem::transmute(value)})
+        } else {
+            Err(CastError::new("BlendType", value as usize))
+        }
+    }
 }
 
 #[repr(u16)]
@@ -355,10 +367,12 @@ impl AnimEntry {
                             let current = unsafe { data.read::<FrameStart>(binary) };
                             let low_flag = current.get_low_flag(); // high flag is currently unused
                             if low_flag.contains(LowFlag::PART_FLAG_CELL_INDEX) {
-                                let _cellIndex = unsafe { data.read::<u16>(&binary) };
-                                println!("frame {}, part {}: cell index: {}", f, i, _cellIndex);
-                                // mapId - index in cellmapNames
-                                // name - name of cell
+                                let cell_index = unsafe { data.read::<u16>(&binary) };
+                                if let Some((map_id, cell_name)) = cells.get(&(cell_index as usize)) {
+                                    attribute_writers[i].add_attribute(f, AttributeKeyframe::Cell((*map_id, cell_name.to_string())));
+                                } else {
+                                    println!("FAILED TO FIND frame {}, part {}: cell index: {}", f, i, cell_index);
+                                }
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_POSITION_X) {
                                 attribute_writers[i].add_attribute(f,
@@ -460,22 +474,29 @@ impl AnimEntry {
                                 let _keyframe = unsafe { data.read::<InstanceKeyframe>(&binary) };
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_EFFECT_KEYFRAME) {
-                                let _effframe = unsafe { data.read::<EffectKeyframe>(&binary) };
+                                attribute_writers[i].add_attribute(f,
+                                    AttributeKeyframe::EffectKeyframe(unsafe { data.read::<EffectKeyframe>(&binary) }));
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_PARTS_COLOR) {
                                 let type_and_flags = unsafe { data.read::<u16>(&binary) };
                                 let flag = ColorAttributeFlags::from_bits_truncate(type_and_flags >> 8);
+                                let blend: BlendType = (type_and_flags & 0xff).try_into().map_err(|e| std::io::Error::other(e))?;
                                 if flag.contains(ColorAttributeFlags::VERTEX_FLAG_ONE) {
                                     let color = unsafe { data.read::<ColorAttribute>(&binary) };
-                                    // println!("{:?}", color);
+                                    attribute_writers[i].add_attribute(f,
+                                        AttributeKeyframe::PartsColor(AttributePartsColor::new_one(&color, blend)));
                                 } else {
-                                    for i in 0..4 {
-                                        let flag = ColorAttributeFlags::from_bits_truncate(1 << i);
-                                        if flag.contains(flag) {
-                                            let color = unsafe { data.read::<ColorAttribute>(&binary) };
-                                            // println!("{:?}: {:?}", flag, color);
-                                        }
+                                    if flag != ColorAttributeFlags::from_bits_truncate(0xf) {
+                                        return Err(std::io::Error::other(AttributeError::PartsColorMisingVertices));
                                     }
+                                    let colors = [
+                                        unsafe { data.read::<ColorAttribute>(&binary) },
+                                        unsafe { data.read::<ColorAttribute>(&binary) },
+                                        unsafe { data.read::<ColorAttribute>(&binary) },
+                                        unsafe { data.read::<ColorAttribute>(&binary) },
+                                    ];
+                                    attribute_writers[i].add_attribute(f,
+                                        AttributeKeyframe::PartsColor(AttributePartsColor::new_vertex(&colors, blend)));
                                 }
                             }
                         }
@@ -522,6 +543,8 @@ impl AnimEntry {
             .write_text_content(BytesText::new(&format!("{}", self.start_frames)))?;
         writer.create_element("endFrame")
             .write_text_content(BytesText::new(&format!("{}", self.end_frames)))?;
+        writer.create_element("bgSettings")
+            .write_inner_content(|writer| to_xml_anime_bg_settings(writer))?;
         writer.create_element("outStartNum")
             .write_text_content(BytesText::new("0"))?;
         Ok(())
@@ -679,6 +702,18 @@ pub struct ColorAttribute {
     rgba: u32
 }
 
+#[derive(Debug)]
+pub enum AttributeError {
+    PartsColorMisingVertices
+}
+
+impl Error for AttributeError {}
+impl Display for AttributeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        <Self as Debug>::fmt(self, f)
+    }
+}
+
 #[repr(C, packed(2))]
 #[derive(Debug)]
 pub struct InstanceKeyframe {
@@ -761,13 +796,15 @@ impl Anime {
         cursor.seek(SeekFrom::End(0))?;
         let mut writer = Writer::new_with_indent(cursor, '\t' as u8, 1);
         writer.create_element("SpriteStudioAnimePack")
-            .with_attributes([("version", "2.00.00")])
+            .with_attributes([("version", "2.00.01")])
             .write_inner_content(|writer| self.to_xml_body(writer, cell_names, binary, cells))?;
         Ok(writer.into_inner().into_inner())
     }
 
     pub(crate) fn to_xml_body<W: Write + Seek>(&self,
         writer: &mut Writer<W>, cell_names: &[String], binary: &[u8], cells: &HashMap<usize, (u16, &str)>) -> std::io::Result<()> {
+        writer.create_element("settings")
+            .write_inner_content(|writer| to_xml_anime_settings(writer))?;
         writer.create_element("name")
             .write_text_content(BytesText::new(self.name.value(binary)))?;
             create_blank_element(writer, "exportPath")?;
@@ -843,6 +880,63 @@ impl<'a> AttributeWriter<'a> {
 }
 
 #[derive(Debug)]
+pub struct AttributePartsColorData {
+    blend_type: BlendType,
+    rgba: u32,
+    rate: f32
+}
+
+impl AttributePartsColorData {
+    fn to_xml<W: Write + Seek>(&self, writer: &mut Writer<W>) -> std::io::Result<()> {
+        writer.create_element("rgba")
+            .write_text_content(BytesText::new(&format!("{:X}", self.rgba)))?;
+        writer.create_element("rate")
+            .write_text_content(BytesText::new(&format!("{}", self.rate)))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum AttributePartsColor {
+    One(AttributePartsColorData),
+    Vertex([AttributePartsColorData; 4])
+}
+
+impl AttributePartsColor {
+    pub fn new_one(color: &ColorAttribute, blend: BlendType) -> Self {
+        Self::One(AttributePartsColorData {
+            blend_type: blend,
+            rgba: color.rgba,
+            rate: color.rate,
+        })
+    }
+    pub fn new_vertex(vertex: &[ColorAttribute], blend: BlendType) -> Self {
+        Self::Vertex([
+            AttributePartsColorData {
+                blend_type: blend,
+                rgba: vertex[0].rgba,
+                rate: vertex[0].rate
+            },
+            AttributePartsColorData {
+                blend_type: blend,
+                rgba: vertex[1].rgba,
+                rate: vertex[1].rate
+            },
+            AttributePartsColorData {
+                blend_type: blend,
+                rgba: vertex[2].rgba,
+                rate: vertex[2].rate
+            },
+            AttributePartsColorData {
+                blend_type: blend,
+                rgba: vertex[3].rgba,
+                rate: vertex[3].rate
+            },
+        ])
+    }
+}
+
+#[derive(Debug)]
 pub enum AttributeKeyframe {
     Cell((u16, String)),
     PositionX(f32),
@@ -871,7 +965,9 @@ pub enum AttributeKeyframe {
     Prio(u16),
     FlipH(u16),
     FlipV(u16),
-    Hide(u16)
+    Hide(u16),
+    PartsColor(AttributePartsColor),
+    EffectKeyframe(EffectKeyframe)
 }
 
 impl AttributeKeyframe {
@@ -905,12 +1001,14 @@ impl AttributeKeyframe {
             Self::FlipH(_) => "FLPH",
             Self::FlipV(_) => "FLPV",
             Self::Hide(_) => "HIDE",
+            Self::PartsColor(_) => "PCOL",
+            Self::EffectKeyframe(_) => "EFCT"
         }
     }
 
     fn use_interpolation(&self) -> bool {
         match self {
-            Self::Cell(_) | Self::FlipH(_) | Self::FlipV(_) | Self::Hide(_) => false,
+            Self::Cell(_) | Self::FlipH(_) | Self::FlipV(_) | Self::Hide(_) | Self::EffectKeyframe(_) => false,
             _ => true
         }
     }
@@ -968,6 +1066,47 @@ impl AttributeKeyframe {
                     Self::FlipH(v) => value.write_text_content(BytesText::new(&format!("{}", *v))),
                     Self::FlipV(v) => value.write_text_content(BytesText::new(&format!("{}", *v))),
                     Self::Hide(v) => value.write_text_content(BytesText::new(&format!("{}", *v))),
+                    Self::PartsColor(p) => match p {
+                        AttributePartsColor::One(one) => {
+                            value.write_inner_content(|writer| {
+                                writer.create_element("target")
+                                    .write_text_content(BytesText::new("whole"))?;
+                                writer.create_element("blendType")
+                                    .write_text_content(BytesText::new(&format!("{:?}", one.blend_type)))?;
+                                writer.create_element("color")
+                                    .write_inner_content(|writer| one.to_xml(writer))?;
+                                Ok(())
+                            })
+                        },
+                        AttributePartsColor::Vertex(v) => {
+                            value.write_inner_content(|writer| {
+                                writer.create_element("target")
+                                    .write_text_content(BytesText::new("vertex"))?;
+                                writer.create_element("blendType")
+                                    .write_text_content(BytesText::new(&format!("{:?}", v[0].blend_type)))?;
+                                writer.create_element("LT")
+                                    .write_inner_content(|writer| v[0].to_xml(writer))?;
+                                writer.create_element("RT")
+                                    .write_inner_content(|writer| v[1].to_xml(writer))?;
+                                writer.create_element("LB")
+                                    .write_inner_content(|writer| v[2].to_xml(writer))?;
+                                writer.create_element("RB")
+                                    .write_inner_content(|writer| v[3].to_xml(writer))?;
+                                Ok(())
+                            })
+                        }
+                    },
+                    Self::EffectKeyframe(k) => {
+                        value.write_inner_content(|writer| {
+                            writer.create_element("startTime")
+                                .write_text_content(BytesText::new(&format!("{}", unsafe { std::ptr::read(&raw const k.start_time) })))?;
+                            writer.create_element("speed")
+                                .write_text_content(BytesText::new(&format!("{}", unsafe { std::ptr::read(&raw const k.speed) })))?;
+                            writer.create_element("independent")
+                                .write_text_content(BytesText::new("0"))?;
+                            Ok(())
+                        })
+                    }
                 }?;
                 Ok(())
             })?;

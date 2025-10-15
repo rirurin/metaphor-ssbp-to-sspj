@@ -116,8 +116,10 @@ fn app() -> Result<(), Box<dyn Error>> {
             if !std::fs::exists(folder.as_path())? {
                 std::fs::create_dir(folder.as_path())?;
             }
-            read_file(path_parent.as_path(), Path::new(filename), path_locale.as_path(),
-                      path_tex.as_path(), folder.as_path())?;
+            if let Err(e) = read_file(path_parent.as_path(), Path::new(filename), path_locale.as_path(),
+                      path_tex.as_path(), folder.as_path()) {
+                println!("ERROR while reading {}: {}", filename, e);
+            }
         }
         Ok(())
     }
@@ -201,8 +203,14 @@ fn read_file<P: AsRef<Path>>(parent: P, filename: P, locale: P, tex: P, output: 
         anime_names.push(format!("{}.ssae", anime.get_name(&binary)));
         std::fs::write(output.as_ref().join(anime_names.last().unwrap()), &val)?;
     }
+    let mut effect_names = Vec::with_capacity(header.get_num_effects() as usize);
+    for effect in header.get_effects(&binary) {
+        let val = effect.to_xml(&binary, header.get_cells(&binary))?;
+        effect_names.push(format!("{}.ssee", effect.get_name(&binary)));
+        std::fs::write(output.as_ref().join(effect_names.last().unwrap()), &val)?;
+    }
     let name = filename.as_ref().file_stem().unwrap().to_str().unwrap();
-    let proj_xml = header.to_xml(name, &cell_names, &anime_names)?;
+    let proj_xml = header.to_xml(name, &cell_names, &anime_names, &effect_names)?;
     std::fs::write(output.as_ref().join(format!("{}.sspj", name)), proj_xml.as_slice())?;
     Ok(())
 }

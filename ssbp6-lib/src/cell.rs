@@ -9,12 +9,16 @@ use quick_xml::Writer;
 use crate::util::{Ptr, StringPtr};
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct CastError((&'static str, usize));
 impl Error for CastError {}
 impl Display for CastError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         <Self as Debug>::fmt(self, f)
+    }
+}
+impl CastError {
+    pub fn new(name: &'static str, value: usize) -> Self {
+        Self((name, value))
     }
 }
 
@@ -183,6 +187,9 @@ impl Ord for CellMap {
 }
 
 impl CellMap {
+    pub fn get_name(&self, binary: &[u8]) -> &str {
+        self.name.value(binary)
+    }
     pub fn get_index(&self) -> u16 {
         self.index
     }
