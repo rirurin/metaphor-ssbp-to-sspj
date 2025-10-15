@@ -1,12 +1,11 @@
 use std::error::Error;
 use std::io::Write;
 use std::io::{Cursor, Seek, SeekFrom};
-use std::path::Path;
 use quick_xml::events::BytesText;
 use quick_xml::Writer;
 use crate::anime::Anime;
 use crate::cell::{tex_pack_settings_to_xml, CellEntry, InterpolateType, TexFilterMode, TexWrapMode};
-use crate::util::{create_blank_element, Ptr, StringPtr};
+use crate::util::{create_blank_element, create_name_list, Ptr, StringPtr};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -32,11 +31,18 @@ impl ProjectHeader {
     pub fn get_cells(&self, binary: &[u8]) -> &[CellEntry] {
         self.cell.array(binary, self.num_cells as usize)
     }
+    pub fn get_num_cells(&self) -> u16 {
+        self.num_cells
+    }
     pub fn get_anime(&self, binary: &[u8]) -> &[Anime] {
         self.anime_pack_data.array(binary, self.num_anime_packs as usize)
     }
+    pub fn get_num_anime(&self) -> u16 {
+        self.num_anime_packs
+    }
 
-    pub fn to_xml(&self, name: &str, cell_names: &[String]) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn to_xml(&self, name: &str, cell_names: &[String], anime_names: &[String])
+        -> Result<Vec<u8>, Box<dyn Error>> {
         let xml_fmt = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n";
         let mut cursor = Cursor::new(xml_fmt.as_bytes().to_vec());
         cursor.seek(SeekFrom::End(0))?;
@@ -50,15 +56,8 @@ impl ProjectHeader {
                 // writer.create_element("settings")
                 //     .write_inner_content(|writer| self.settings_to_xml(writer))?;
                 tex_pack_settings_to_xml(writer)?;
-                writer.create_element("cellmapNames")
-                    .write_inner_content(|writer| {
-                        for cell in cell_names {
-                            writer.create_element("value")
-                                .write_text_content(BytesText::new(cell))?;
-                        }
-                        Ok(())
-                    })?;
-                create_blank_element(writer, "animepackNames")?;
+                create_name_list("cellmapNames", cell_names, writer)?;
+                create_name_list("animepackNames", anime_names, writer)?;
                 create_blank_element(writer, "lastAnimeFile")?;
                 create_blank_element(writer, "lastAnimeName")?;
                 create_blank_element(writer, "lastPart")?;
@@ -74,6 +73,7 @@ impl ProjectHeader {
         Ok(writer.into_inner().into_inner())
     }
 
+    #[allow(dead_code)]
     fn settings_to_xml<W>(&self, writer: &mut Writer<W>) -> std::io::Result<()>
     where W: Write + Seek {
         create_blank_element(writer, "animeBaseDirectory")?;

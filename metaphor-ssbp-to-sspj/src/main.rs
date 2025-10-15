@@ -1,16 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
-use std::io::{Cursor, Write};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use glam::{UVec2, Vec2};
-use image::{DynamicImage, ImageFormat, ImageReader};
+use image::ImageReader;
 use image::codecs::png::PngEncoder;
 use metaphor_apk_rs::read::ApkReader;
-use walkdir::{DirEntry, WalkDir };
-use ssbp6_lib::cell::{Cell, CellMap};
+use walkdir::WalkDir;
+use ssbp6_lib::cell::Cell;
 use ssbp6_lib::project::ProjectHeader;
 
 #[derive(Debug)]
@@ -48,11 +47,6 @@ fn main() {
         println!("{}", e);
     }
 }
-
-fn filter_sprites(d: &DirEntry) -> bool {
-    is_sprite(d.path().extension())
-}
-
 fn is_sprite(ext: Option<&OsStr>) -> bool {
     ext.map_or(false, |ext| ext.to_str().unwrap() == "ssbp")
 }
@@ -67,7 +61,8 @@ fn app() -> Result<(), Box<dyn Error>> {
     if !std::fs::exists(&args[0])? {
         return Err(Box::new(AppError::InputDoesNotExist(args[0].clone())));
     }
-    if !is_sprite(Path::new(&args[0]).extension()) {
+    let is_file = std::fs::metadata(&args[0])?.is_file();
+    if is_file && !is_sprite(Path::new(&args[0]).extension()) {
         return Err(Box::new(AppError::WrongFileType(args[0].clone())));
     }
     let locale = match args.len() < 3 {
@@ -79,8 +74,11 @@ fn app() -> Result<(), Box<dyn Error>> {
     let mut path_tex = PathBuf::new();
     let mut path_locale = PathBuf::new();
     let mut in_common_cpk = false;
-    let filename = Path::new(&args[0]).file_name().unwrap().to_str().unwrap();
-    for comp in Path::new(&args[0]).parent().unwrap().components() {
+    let comp_list = match is_file {
+        true => Path::new(&args[0]).parent().unwrap(),
+        false => Path::new(&args[0])
+    };
+    for comp in comp_list.components() {
         path_parent.push(comp);
         if let std::path::Component::Normal(n) = &comp {
             let part = n.to_str().unwrap();
@@ -99,49 +97,55 @@ fn app() -> Result<(), Box<dyn Error>> {
     if !in_common_cpk {
         return Err(Box::new(AppError::NotInMetaphorCpk(args[0].clone())));
     }
-
     std::fs::create_dir_all(&args[1])?;
-    let meta = std::fs::metadata(&args[0])?;
-    read_file(path_parent.as_path(), Path::new(filename), path_locale.as_path(),
-              path_tex.as_path(), Path::new(&args[1]))
-        /*
-    if meta.is_file() {
-        read_file(&path_parent, &args[1], &locale)
-    } else if meta.is_dir() {
-        for file in WalkDir::new(&args[0]).into_iter()
-            .filter_entry(|e| filter_sprites(e)) {
-            let file = file.unwrap();
-            let filename = Path::new(&args[0]).file_name().unwrap().to_str()
-                .unwrap().rsplit_once(".").unwrap().0;
-            let folder = PathBuf::from(&args[1]).join("filename");
-            std::fs::create_dir(folder.as_path())?;
-            read_file(file.path().to_str().unwrap(), folder.as_path(), &locale)?;
+    if is_file {
+        let filename = Path::new(&args[0]).file_name().unwrap().to_str().unwrap();
+        read_file(path_parent.as_path(), Path::new(filename), path_locale.as_path(),
+                  path_tex.as_path(), Path::new(&args[1]))
+    } else {
+        for file in WalkDir::new(path_parent.as_path()).into_iter()
+            // .filter_entry(|e| filter_sprites(e)) {
+            .filter_entry(|e| e.file_type().is_dir() || is_sprite(e.path().extension())) {
+            let file = file?;
+            if file.file_type().is_dir() {
+                continue;
+            }
+            let file_stem = file.path().file_stem().unwrap().to_str().unwrap();
+            let filename = file.path().file_name().unwrap().to_str().unwrap();
+            let folder = PathBuf::from(&args[1]).join(file_stem);
+            if !std::fs::exists(folder.as_path())? {
+                std::fs::create_dir(folder.as_path())?;
+            }
+            read_file(path_parent.as_path(), Path::new(filename), path_locale.as_path(),
+                      path_tex.as_path(), folder.as_path())?;
         }
         Ok(())
-    } else {
-        Err(Box::new(AppError::UnknownMetadata(args[0].clone())))
     }
-         */
 }
 
 fn read_file<P: AsRef<Path>>(parent: P, filename: P, locale: P, tex: P, output: P) -> Result<(), Box<dyn Error>> {
-    let name = filename.as_ref().file_stem().unwrap().to_str().unwrap();
     println!("{:?}", parent.as_ref().join(filename.as_ref()));
     let binary = std::fs::read(parent.as_ref().join(filename.as_ref()))?;
-    println!("{} bytes", binary.len());
+    // println!("{} bytes", binary.len());
     let header = unsafe { &*(binary.as_ptr().add(0) as *const ProjectHeader) };
-    println!("{:?}", header);
+    // println!("{:?}", header);
     let mut cells: HashMap<u16, Cell> = HashMap::new();
-    for entry in header.get_cells(&binary) {
+    // cell array index -> (map index, cell name) (for getting reference in ssae)
+    let mut cell_resolver_anime: HashMap<usize, (u16, &str)> = HashMap::new();
+    for (i, entry) in header.get_cells(&binary).iter().enumerate() {
         let map = entry.get_cell_map(&binary);
         match cells.get_mut(&map.get_index()) {
             Some(cell) => cell.add(entry),
             None => { let _ = cells.insert(map.get_index(), Cell::new(map, entry)); }
         };
+        cell_resolver_anime.insert(i, (map.get_index(), entry.get_name(&binary)));
+    }
+    let mut cell_names = Vec::with_capacity(cells.len());
+    for i in 0..cells.len() {
+        cell_names.push(String::new());
     }
     for (i, cell) in &cells {
-        let val = cell.to_xml(&parent,
-            &binary, |image_path|  {
+        let val = cell.to_xml(&binary, |image_path|  {
                 let (base, ext) = image_path.rsplit_once(".").unwrap();
                 let (name, is_apk) = match ext {
                     "apk" => (format!("{}.png", base), true),
@@ -185,17 +189,20 @@ fn read_file<P: AsRef<Path>>(parent: P, filename: P, locale: P, tex: P, output: 
                 };
                 Ok((name, dims.into()))
         })?;
-        std::fs::write(output.as_ref().join(format!("{}.ssce", cell.get_name(&binary))), &val)?;
+        cell_names[*i as usize] = format!("{}.ssce", cell.get_name(&binary));
+        // cell_names.push(format!("{}.ssce", cell.get_name(&binary)));
+        std::fs::write(output.as_ref().join(&cell_names[*i as usize]), &val)?;
     }
-    /*
-    // TODO: Anime
-    for entry in header.get_anime(&binary) {
-        for part in entry.get_parts(&binary) {
-        }
+    let mut anime_names = Vec::with_capacity(header.get_num_anime() as usize);
+    for anime in header.get_anime(&binary) {
+        // let val = anime.to_xml(&cell_names, &binary, header.get_cells(&binary))?;
+        // let val = anime.to_xml(&cell_names, &binary, &cells)?;
+        let val = anime.to_xml(&cell_names, &binary, &cell_resolver_anime)?;
+        anime_names.push(format!("{}.ssae", anime.get_name(&binary)));
+        std::fs::write(output.as_ref().join(anime_names.last().unwrap()), &val)?;
     }
-    */
-    let cell_names: Vec<String> = cells.iter().map(|(_, c)| format!("{}.ssce", c.get_name(&binary))).collect();
-    let proj_xml = header.to_xml(name, &cell_names)?;
+    let name = filename.as_ref().file_stem().unwrap().to_str().unwrap();
+    let proj_xml = header.to_xml(name, &cell_names, &anime_names)?;
     std::fs::write(output.as_ref().join(format!("{}.sspj", name)), proj_xml.as_slice())?;
     Ok(())
 }

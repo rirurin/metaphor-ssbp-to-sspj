@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use quick_xml::events::BytesText;
 use quick_xml::Writer;
 
+#[allow(dead_code)]
 pub(crate) unsafe fn from_bytes<T>(s: &[u8], o: usize) -> &T {
     unsafe { &*(s.as_ptr().add(o) as *const T) }
 }
@@ -41,5 +42,20 @@ where W: Write + Seek
 {
     writer.create_element(name)
         .write_text_content(BytesText::new(""))?;
+    Ok(())
+}
+
+pub(crate) fn create_name_list<W>(name: &str, values: &[String], writer: &mut Writer<W>)
+    -> std::io::Result<()>
+where W: Write + Seek
+{
+    writer.create_element(name)
+        .write_inner_content(|writer| {
+            for value in values {
+                writer.create_element("value")
+                    .write_text_content(BytesText::new(value))?;
+            }
+            Ok(())
+        })?;
     Ok(())
 }

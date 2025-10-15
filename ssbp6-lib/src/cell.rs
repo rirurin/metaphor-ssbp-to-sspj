@@ -3,67 +3,19 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Cursor, Seek, SeekFrom, Write};
-use std::path::Path;
-use glam::{UVec2, Vec2};
+use glam::UVec2;
 use quick_xml::events::BytesText;
 use quick_xml::Writer;
 use crate::util::{Ptr, StringPtr};
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CastError((&'static str, usize));
 impl Error for CastError {}
 impl Display for CastError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         <Self as Debug>::fmt(self, f)
     }
-}
-
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
-pub enum PartType {
-    null,			//< Has no region, only SRT information. However, circular collision detection can be set.
-    normal,			//< Normal part. Has a region. May not have an image.
-    text,			//< Text (Reserved - Not implemented)
-    instance,		//< Instance. Reference to other animations or parts. Replaces scene edit mode.
-    armature,		//< Bone Part
-    effect,			//< Effect
-    mesh,			//< Mesh Part
-    movenode,		//< Action Origin
-    constraint,		//< Constraint
-    mask,			//< Mask
-    joint,			//< Mesh-Bone Association Part
-    bonepoint,		//< Bone Point
-}
-
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
-pub enum BoundsType {
-    None,			//< Not used for collision detection.
-    Quad,			//< A freely deformable quadrilateral. The area enclosed by the four corners after applying vertex deformation, etc. Heaviest.
-    Aabb,			//< Collision detection using a non-rotating bounding rectangle
-    Circle,			//< Determine collision based on distance using the radius of a perfect circle
-    Circle_smin,	//< Determine collision based on distance using the radius of a perfect circle (scale uses the minimum value of x,y)
-    Circle_smax,	//< Determine collision based on distance using the radius of a perfect circle (scale uses the maximum value of x,y)
-}
-
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
-pub enum InheritType {
-    FromParent,			//< Inherit the parent's inheritance method directly
-    FromSelf,			//< Use the inheritance method you possess for each attribute
-}
-
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
-pub enum BlendType {
-    Mix,
-    Mul,
-    Add,
-    Sub,
-    Mulalpha,
-    Screen,
-    Exclusion,
-    Invert,
 }
 
 #[repr(u32)]
@@ -161,7 +113,10 @@ impl Ord for CellEntry {
 }
 
 impl CellEntry {
-    pub fn to_xml<W: std::io::Write>(&self, writer: &mut Writer<W>, binary: &[u8]) -> std::io::Result<()> {
+    pub fn get_name(&self, binary: &[u8]) -> &str {
+        self.name.value(binary)
+    }
+    pub fn to_xml<W: Write>(&self, writer: &mut Writer<W>, binary: &[u8]) -> std::io::Result<()> {
         writer.create_element("cell")
             .write_inner_content(|writer| {
                 let cell_name = self.name.value(binary);
@@ -285,6 +240,11 @@ impl<'a> Cell<'a> {
         self.data.name.value(binary)
     }
 
+    pub fn get_name_by_index(&self, index: u16, binary: &[u8]) -> Option<&str> {
+        self.list.iter().find(|c| c.index == index)
+            .map(|c| c.get_name(binary))
+    }
+
     // .ssce XML format:
     //
     // <?xml version="1.0" encoding="utf-8" standalone="yes"?>
@@ -322,10 +282,9 @@ impl<'a> Cell<'a> {
     //      {end foreach}
     //  </cells>
     // </SpriteStudioCellMap>
-    pub fn to_xml<F, P>(&self, dir: P, binary: &[u8], get_img_params: F)
+    pub fn to_xml<F>(&self, binary: &[u8], get_img_params: F)
         -> Result<Vec<u8>, Box<dyn Error>>
     where F: Fn(&str) -> std::io::Result<(String, UVec2)>,
-          P: AsRef<Path>
     {
         let xml_fmt = "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n";
         let mut cursor = Cursor::new(xml_fmt.as_bytes().to_vec());
