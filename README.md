@@ -31,3 +31,4 @@ Where for each of the following parameters:
 [metaphor-apk-rs](https://github.com/rirurin/metaphor-apk-rs) (GPL 3.0) parses these, based off [**DeathChaos**](https://github.com/DeathChaos25/)' C# implementation in [MetaphorAPKPack](https://github.com/DeathChaos25/MetaphorAPKPack) (GPL 3.0) 
 - Sprite Studio doesn't support DDS files, so the program re-encodes them as PNG. This takes a while since the 4K textures are used.
 - The sprite project is formatted to use a 4K canvas for fullscreen sprites, and position keyframes match the dimensions of 4K textures.
+- Sprite Studio's editor and the viewer [included with the SDK](https://github.com/SpriteStudio/SpriteStudio6-SDK/) render certain elements differently (the viewer doesn't seem to handle masking elements).
