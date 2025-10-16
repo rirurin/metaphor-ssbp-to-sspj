@@ -11,6 +11,7 @@ use metaphor_apk_rs::read::ApkReader;
 use walkdir::WalkDir;
 use ssbp6_lib::cell::Cell;
 use ssbp6_lib::project::ProjectHeader;
+use rayon::prelude::*;
 
 #[derive(Debug)]
 pub enum AppError {
@@ -103,6 +104,7 @@ fn app() -> Result<(), Box<dyn Error>> {
         read_file(path_parent.as_path(), Path::new(filename), path_locale.as_path(),
                   path_tex.as_path(), Path::new(&args[1]))
     } else {
+        let mut file_list: Vec<(PathBuf, PathBuf)> = vec![];
         for file in WalkDir::new(path_parent.as_path()).into_iter()
             // .filter_entry(|e| filter_sprites(e)) {
             .filter_entry(|e| e.file_type().is_dir() || is_sprite(e.path().extension())) {
@@ -116,11 +118,14 @@ fn app() -> Result<(), Box<dyn Error>> {
             if !std::fs::exists(folder.as_path())? {
                 std::fs::create_dir(folder.as_path())?;
             }
-            if let Err(e) = read_file(path_parent.as_path(), Path::new(filename), path_locale.as_path(),
-                      path_tex.as_path(), folder.as_path()) {
-                println!("ERROR while reading {}: {}", filename, e);
-            }
+            file_list.push((PathBuf::from(filename), folder))
         }
+        file_list.par_iter().for_each(|(input, output)| {
+            if let Err(e) = read_file(path_parent.as_path(), input.as_path(), path_locale.as_path(),
+                                      path_tex.as_path(), output.as_path()) {
+                println!("ERROR while reading {}: {}", input.as_path().to_str().unwrap(), e);
+            }
+        });
         Ok(())
     }
 }
@@ -197,8 +202,6 @@ fn read_file<P: AsRef<Path>>(parent: P, filename: P, locale: P, tex: P, output: 
     }
     let mut anime_names = Vec::with_capacity(header.get_num_anime() as usize);
     for anime in header.get_anime(&binary) {
-        // let val = anime.to_xml(&cell_names, &binary, header.get_cells(&binary))?;
-        // let val = anime.to_xml(&cell_names, &binary, &cells)?;
         let val = anime.to_xml(&cell_names, &binary, &cell_resolver_anime)?;
         anime_names.push(format!("{}.ssae", anime.get_name(&binary)));
         std::fs::write(output.as_ref().join(anime_names.last().unwrap()), &val)?;

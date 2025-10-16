@@ -274,20 +274,36 @@ impl AnimEntry {
                 let mut attribute_writers: Vec<_> = (0..parts.len()).map(|i| {
                     AttributeWriter::new(parts[i].get_name(binary))
                 }).collect();
+                let mut invisible_list: Vec<bool> = (0..parts.len()).map(|i| {
+                    match parts[i]._type {
+                        PartType::instance | PartType::effect => true,
+                        _ => false
+                    }
+                }).collect();
+                let mut last_effect_keyframe: HashMap<usize, EffectKeyframe> = HashMap::new();
+                let mut last_keyframe: Vec<HashMap<LowFlag, (usize, AttributeKeyframe)>> = (0..parts.len()).map(|_| HashMap::new()).collect();
+                // let mut last_opacity: Vec<Option<(usize, f32)>> = vec![None; parts.len()];
+                // let mut invisible_list: Vec<bool> = vec![false; parts.len()];
                 for (f, frame) in self.get_frame_data(binary, self.total_frames as usize).iter().enumerate() {
                     let mut data = frame.value(binary);
                     if anime_name == "Setup" {
                         for (i, cell_setup) in self.default_data.array(binary, parts.len()).iter().enumerate() {
-                            if parts[i]._type == PartType::normal {
-                                if !attribute_writers[i].has_attribute("CELL") {
-                                    let index = cell_setup.cell_index;
-                                    if let Some((map_id, cell_name)) = cells.get(&(index as usize)) {
-                                        attribute_writers[i].add_attribute(f, AttributeKeyframe::Cell((*map_id, cell_name.to_string())));
-                                    }
+                            let check_cell = match parts[i]._type {
+                                PartType::normal | PartType::mask => true,
+                                _ => false
+                            };
+                            let check_hide = match parts[i]._type {
+                                PartType::normal | PartType::mask => true,
+                                _ => false
+                            };
+                            if check_cell && !attribute_writers[i].has_attribute("CELL"){
+                                let index = cell_setup.cell_index;
+                                if let Some((map_id, cell_name)) = cells.get(&(index as usize)) {
+                                    attribute_writers[i].add_attribute(f, AttributeKeyframe::Cell((*map_id, cell_name.to_string())));
                                 }
-                                if !attribute_writers[i].has_attribute("HIDE") {
-                                    attribute_writers[i].add_attribute(f, AttributeKeyframe::Hide(0));
-                                }
+                            }
+                            if check_hide && !attribute_writers[i].has_attribute("HIDE") {
+                                attribute_writers[i].add_attribute(f, AttributeKeyframe::Hide(0));
                             }
                             if cell_setup.position.x != 0. {
                                 attribute_writers[i].add_attribute(f, AttributeKeyframe::PositionX(cell_setup.position.x));
@@ -366,6 +382,10 @@ impl AnimEntry {
                         for i in 0..parts.len() {
                             let current = unsafe { data.read::<FrameStart>(binary) };
                             let low_flag = current.get_low_flag(); // high flag is currently unused
+                            // if i != current.get_index() as usize {
+                            //     panic!("Index does not match! {} vs {}", i, current.get_index());
+                            // }
+                            // println!("{}, {:?}", current.get_index(),current.get_low_flag());
                             if low_flag.contains(LowFlag::PART_FLAG_CELL_INDEX) {
                                 let cell_index = unsafe { data.read::<u16>(&binary) };
                                 if let Some((map_id, cell_name)) = cells.get(&(cell_index as usize)) {
@@ -374,108 +394,130 @@ impl AnimEntry {
                                     println!("FAILED TO FIND frame {}, part {}: cell index: {}", f, i, cell_index);
                                 }
                             }
+                            if low_flag.contains(LowFlag::PART_FLAG_INVISIBLE) {
+                                // println!("frame {}, part {}: HIDE", f, i);
+                                if !invisible_list[i] {
+                                    attribute_writers[i].add_attribute(f, AttributeKeyframe::Hide(1));
+                                    invisible_list[i] = true;
+                                }
+                            } else if invisible_list[i] {
+                                attribute_writers[i].add_attribute(f, AttributeKeyframe::Hide(0));
+                            }
+                            /*
+                            if invisible_list[i] && !low_flag.contains(LowFlag::PART_FLAG_INVISIBLE) {
+                                invisible_list[i] = false;
+                                attribute_writers[i].add_attribute(f, AttributeKeyframe::Hide(0));
+                            }
+                            */
                             if low_flag.contains(LowFlag::PART_FLAG_POSITION_X) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::PositionX(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::PositionX(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_POSITION_X, new)?
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_POSITION_Y) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::PositionY(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::PositionY(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_POSITION_Y, new)?
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_POSITION_Z) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::PositionZ(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::PositionZ(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_POSITION_Z, new)?
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_PIVOT_X) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::PivotX(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::PivotX(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_PIVOT_X, new)?
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_PIVOT_Y) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::PivotY(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::PivotY(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_PIVOT_Y, new)?
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_ROTATIONX) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::RotationX(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::RotationX(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_ROTATIONX, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_ROTATIONY) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::RotationY(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::RotationY(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_ROTATIONY, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_ROTATIONZ) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::RotationZ(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::RotationZ(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_ROTATIONZ, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_SCALE_X) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::ScaleX(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::ScaleX(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_SCALE_X, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_SCALE_Y) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::ScaleY(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::ScaleY(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_SCALE_Y, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_LOCALSCALE_X) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::LocalScaleX(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::LocalScaleX(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_LOCALSCALE_X, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_LOCALSCALE_Y) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::LocalScaleY(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::LocalScaleY(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_LOCALSCALE_Y, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_OPACITY) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::Opacity(unsafe { data.read::<u16>(&binary) } as f32 / 255.));
+                                let new = AttributeKeyframe::Opacity(unsafe { data.read::<u16>(&binary) } as f32 / 255.);
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_OPACITY, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_LOCALOPACITY) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::LocalOpacity(unsafe { data.read::<u16>(&binary) } as f32 / 255.));
+                                let new = AttributeKeyframe::LocalOpacity(unsafe { data.read::<u16>(&binary) } as f32 / 255.);
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_LOCALOPACITY, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_SIZE_X) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::SizeX(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::SizeX(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_SIZE_X, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_SIZE_Y) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::SizeY(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::SizeY(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_SIZE_Y, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_U_MOVE) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::UVMoveU(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::UVMoveU(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_U_MOVE, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_V_MOVE) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::UVMoveV(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::UVMoveV(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_V_MOVE, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_UV_ROTATION) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::UVRotate(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::UVRotate(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_UV_ROTATION, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_U_SCALE) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::UVScaleU(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::UVScaleU(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_U_SCALE, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_V_SCALE) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::UVScaleV(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::UVScaleV(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_V_SCALE, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_BOUNDINGRADIUS) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::BoundingRadius(unsafe { data.read::<f32>(&binary) }));
+                                let new = AttributeKeyframe::BoundingRadius(unsafe { data.read::<f32>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_BOUNDINGRADIUS, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_MASK) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::Mask(unsafe { data.read::<u16>(&binary) }));
+                                let new = AttributeKeyframe::Mask(unsafe { data.read::<u16>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_MASK, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_PRIORITY) {
-                                attribute_writers[i].add_attribute(f,
-                                                                   AttributeKeyframe::Prio(unsafe { data.read::<u16>(&binary) }));
+                                let new = AttributeKeyframe::Prio(unsafe { data.read::<u16>(&binary) });
+                                attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_PRIORITY, new)?;
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_INSTANCE_KEYFRAME) {
-                                let _keyframe = unsafe { data.read::<InstanceKeyframe>(&binary) };
+                                let new = unsafe { data.read::<InstanceKeyframe>(&binary) };
+                                attribute_writers[i].add_attribute(f, AttributeKeyframe::InstanceKeyframe(new));
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_EFFECT_KEYFRAME) {
-                                attribute_writers[i].add_attribute(f,
-                                    AttributeKeyframe::EffectKeyframe(unsafe { data.read::<EffectKeyframe>(&binary) }));
+                                let new = unsafe { data.read::<EffectKeyframe>(&binary) };
+                                let allow_new = match last_effect_keyframe.get(&i) {
+                                    Some(k) => k != &new, None => true
+                                };
+                                if allow_new {
+                                    let  _ = last_effect_keyframe.insert(i, new.clone());
+                                    attribute_writers[i].add_attribute(f, AttributeKeyframe::EffectKeyframe(new));
+                                }
                             }
                             if low_flag.contains(LowFlag::PART_FLAG_PARTS_COLOR) {
                                 let type_and_flags = unsafe { data.read::<u16>(&binary) };
@@ -483,8 +525,8 @@ impl AnimEntry {
                                 let blend: BlendType = (type_and_flags & 0xff).try_into().map_err(|e| std::io::Error::other(e))?;
                                 if flag.contains(ColorAttributeFlags::VERTEX_FLAG_ONE) {
                                     let color = unsafe { data.read::<ColorAttribute>(&binary) };
-                                    attribute_writers[i].add_attribute(f,
-                                        AttributeKeyframe::PartsColor(AttributePartsColor::new_one(&color, blend)));
+                                    let new = AttributeKeyframe::PartsColor(AttributePartsColor::new_one(&color, blend));
+                                    attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_PARTS_COLOR, new)?;
                                 } else {
                                     if flag != ColorAttributeFlags::from_bits_truncate(0xf) {
                                         return Err(std::io::Error::other(AttributeError::PartsColorMisingVertices));
@@ -495,8 +537,8 @@ impl AnimEntry {
                                         unsafe { data.read::<ColorAttribute>(&binary) },
                                         unsafe { data.read::<ColorAttribute>(&binary) },
                                     ];
-                                    attribute_writers[i].add_attribute(f,
-                                        AttributeKeyframe::PartsColor(AttributePartsColor::new_vertex(&colors, blend)));
+                                    let new = AttributeKeyframe::PartsColor(AttributePartsColor::new_vertex(&colors, blend));
+                                    attribute_writers[i].attribute_to_xml_interp(&mut last_keyframe[i], f, LowFlag::PART_FLAG_PARTS_COLOR, new)?;
                                 }
                             }
                         }
@@ -552,7 +594,7 @@ impl AnimEntry {
 }
 
 bitflags! {
-    #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
+    #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
     pub struct LowFlag: u32 {
         const PART_FLAG_INVISIBLE			= 1 << 0;
 	    const PART_FLAG_FLIP_H			= 1 << 1;
@@ -714,19 +756,29 @@ impl Display for AttributeError {
     }
 }
 
+bitflags! {
+    #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
+    pub struct InstanceLoopFlags : u32 {
+	    const INFINITY		= 1 << 0;
+	    const REVERSE		= 1 << 1;
+	    const PINGPONG		= 1 << 2;
+	    const INDEPENDENT		= 1 << 3;
+    }
+}
+
 #[repr(C, packed(2))]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InstanceKeyframe {
     current_frame: u32,
     start_frame: u32,
     end_frame: u32,
     loop_num: u32,
     speed: f32,
-    loop_flag: u32,
+    loop_flag: InstanceLoopFlags,
 }
 
 #[repr(C, packed(2))]
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EffectKeyframe {
     current_frame: u32,
     start_time: u32,
@@ -877,9 +929,32 @@ impl<'a> AttributeWriter<'a> {
         }
         Ok(())
     }
+
+    pub(crate) fn attribute_to_xml_interp(&mut self,
+    last_keyframes: &mut HashMap<LowFlag, (usize, AttributeKeyframe)>, frame: usize,
+    flag: LowFlag, new: AttributeKeyframe) -> std::io::Result<()> {
+        let last = last_keyframes.get(&flag);
+        let (allow_new, add_previous) = match last {
+            Some((pf, v)) => {
+                match &new != v {
+                    true => (true, (frame - *pf) > 1),
+                    false => (false, false)
+                }
+            },
+            None => (true, false)
+        };
+        if add_previous { // only called if there's at least one keyframe already
+            self.add_attribute(frame - 1, last.unwrap().1.clone());
+        }
+        if allow_new {
+            last_keyframes.insert(flag, (frame, new.clone()));
+            self.add_attribute(frame, new);
+        }
+        Ok(())
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AttributePartsColorData {
     blend_type: BlendType,
     rgba: u32,
@@ -896,7 +971,7 @@ impl AttributePartsColorData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AttributePartsColor {
     One(AttributePartsColorData),
     Vertex([AttributePartsColorData; 4])
@@ -936,7 +1011,7 @@ impl AttributePartsColor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AttributeKeyframe {
     Cell((u16, String)),
     PositionX(f32),
@@ -967,7 +1042,8 @@ pub enum AttributeKeyframe {
     FlipV(u16),
     Hide(u16),
     PartsColor(AttributePartsColor),
-    EffectKeyframe(EffectKeyframe)
+    EffectKeyframe(EffectKeyframe),
+    InstanceKeyframe(InstanceKeyframe)
 }
 
 impl AttributeKeyframe {
@@ -1002,13 +1078,15 @@ impl AttributeKeyframe {
             Self::FlipV(_) => "FLPV",
             Self::Hide(_) => "HIDE",
             Self::PartsColor(_) => "PCOL",
-            Self::EffectKeyframe(_) => "EFCT"
+            Self::EffectKeyframe(_) => "EFCT",
+            Self::InstanceKeyframe(_) => "IPRM"
         }
     }
 
     fn use_interpolation(&self) -> bool {
         match self {
-            Self::Cell(_) | Self::FlipH(_) | Self::FlipV(_) | Self::Hide(_) | Self::EffectKeyframe(_) => false,
+            Self::Cell(_) | Self::FlipH(_) | Self::FlipV(_) | Self::Hide(_)
+            | Self::EffectKeyframe(_) | Self::InstanceKeyframe(_) => false,
             _ => true
         }
     }
@@ -1106,7 +1184,37 @@ impl AttributeKeyframe {
                                 .write_text_content(BytesText::new("0"))?;
                             Ok(())
                         })
-                    }
+                    },
+                    Self::InstanceKeyframe(k) => {
+                        value.write_inner_content(|writer| {
+                            let loop_flags = unsafe { std::ptr::read(&raw const k.loop_flag) };
+                            if loop_flags.contains(InstanceLoopFlags::INFINITY) {
+                                writer.create_element("infinity")
+                                    .write_text_content(BytesText::new("1"))?;
+                            }
+                            if loop_flags.contains(InstanceLoopFlags::REVERSE) {
+                                writer.create_element("reverse")
+                                    .write_text_content(BytesText::new("1"))?;
+                            }
+                            if loop_flags.contains(InstanceLoopFlags::PINGPONG) {
+                                writer.create_element("pingpong")
+                                    .write_text_content(BytesText::new("1"))?;
+                            }
+                            if loop_flags.contains(InstanceLoopFlags::INDEPENDENT) {
+                                writer.create_element("independent")
+                                    .write_text_content(BytesText::new("1"))?;
+                            }
+                            writer.create_element("loopNum")
+                                .write_text_content(BytesText::new(&format!("{}", unsafe { std::ptr::read(&raw const k.loop_num) })))?;
+                            writer.create_element("startOffset")
+                                .write_text_content(BytesText::new(&format!("{}", unsafe { std::ptr::read(&raw const k.start_frame) })))?;
+                            writer.create_element("endOffset")
+                                .write_text_content(BytesText::new(&format!("{}", unsafe { std::ptr::read(&raw const k.end_frame) })))?;
+                            writer.create_element("speed")
+                                .write_text_content(BytesText::new(&format!("{}", unsafe { std::ptr::read(&raw const k.speed) })))?;
+                            Ok(())
+                        })
+                    },
                 }?;
                 Ok(())
             })?;

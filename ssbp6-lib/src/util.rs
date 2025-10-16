@@ -3,6 +3,7 @@ use std::io::{Seek, Write};
 use std::marker::PhantomData;
 use quick_xml::events::BytesText;
 use quick_xml::Writer;
+use crate::anime::AttributeKeyframe;
 
 #[allow(dead_code)]
 pub(crate) unsafe fn from_bytes<T>(s: &[u8], o: usize) -> &T {

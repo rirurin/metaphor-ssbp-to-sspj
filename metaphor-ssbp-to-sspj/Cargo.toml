@@ -14,5 +14,6 @@ glam = "0.30"
 image = "0.25"
 image_dds = "0.7.2"
 metaphor-apk-rs = { git = "https://github.com/rirurin/metaphor-apk-rs" }
+rayon = "1.11.0"
 ssbp6-lib = { path = "../ssbp6-lib" }
 walkdir = "2"
