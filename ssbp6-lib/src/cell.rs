@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Cursor, Seek, SeekFrom, Write};
-use glam::UVec2;
+use glam::{UVec2, Vec2};
 use quick_xml::events::BytesText;
 use quick_xml::Writer;
 use crate::util::{Ptr, StringPtr};
@@ -120,6 +120,25 @@ impl CellEntry {
     pub fn get_name(&self, binary: &[u8]) -> &str {
         self.name.value(binary)
     }
+    pub fn get_index(&self) -> u16 {
+        self.index
+    }
+    pub fn get_pos(&self) -> UVec2 {
+        UVec2::new(self.x as _, self.y as _)
+    }
+    pub fn get_size(&self) -> UVec2 {
+        UVec2::new(self.width as _, self.height as _)
+    }
+    pub fn get_pivot_x(&self) -> f32 {
+        self.pivot_x
+    }
+    pub fn get_pivot(&self) -> Vec2 {
+        Vec2::new(self.pivot_x, self.pivot_y)
+    }
+    pub fn get_texcoord(&self) -> [Vec2; 2] {
+        [Vec2::new(self.u1, self.v1), Vec2::new(self.u2, self.v2)]
+    }
+
     pub fn to_xml<W: Write>(&self, writer: &mut Writer<W>, binary: &[u8]) -> std::io::Result<()> {
         writer.create_element("cell")
             .write_inner_content(|writer| {
