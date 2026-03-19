@@ -10,5 +10,5 @@ edition.workspace = true
 
 [dependencies]
 bitflags = "2.9"
-glam = "0.30"
+glam = "0.32"
 quick-xml = "0.38"

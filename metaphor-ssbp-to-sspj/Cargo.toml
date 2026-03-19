@@ -10,7 +10,7 @@ edition.workspace = true
 
 [dependencies]
 ddsfile = "0.5.2"
-glam = "0.30"
+glam = "0.32"
 image = "0.25"
 image_dds = "0.7.2"
 metaphor-apk-rs = { git = "https://github.com/rirurin/metaphor-apk-rs" }
